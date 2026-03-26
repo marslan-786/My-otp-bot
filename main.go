@@ -120,7 +120,9 @@ func fetchPanel1Data() ([]interface{}, bool) {
 	// Date Now Logic: 00:00:00 to 23:59:59 of Current Day
 	now := time.Now()
 	dateStr := now.Format("2006-01-02")
-	fetchURL := fmt.Sprintf("http://185.2.83.39/ints/agent/res/data_smscdr.php?fdate1=%s%%2000:00:00&fdate2=%s%%2023:59:59&sEcho=1&iColumns=9&iDisplayStart=0&iDisplayLength=25&sesskey=%s", dateStr, dateStr, currentSessKeyPanel1)
+	
+	// FIX: Added Sorting Parameters (&iSortCol_0=0&sSortDir_0=desc&iSortingCols=1) to get LATEST messages first
+	fetchURL := fmt.Sprintf("http://185.2.83.39/ints/agent/res/data_smscdr.php?fdate1=%s%%2000:00:00&fdate2=%s%%2023:59:59&sEcho=1&iColumns=9&iDisplayStart=0&iDisplayLength=25&iSortCol_0=0&sSortDir_0=desc&iSortingCols=1&sesskey=%s", dateStr, dateStr, currentSessKeyPanel1)
 
 	req, _ := http.NewRequest("GET", fetchURL, nil)
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
@@ -168,6 +170,49 @@ func fetchNumberPanelAPI() ([]interface{}, bool) {
 		return aaData.([]interface{}), true
 	}
 	return nil, true
+}
+
+// ================= DEBUG API ROUTES =================
+
+func handleCheckPanel1(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if currentSessKeyPanel1 == "" {
+		w.Write([]byte(`{"error": "Session key is empty. Bot might still be logging in."}`))
+		return
+	}
+	
+	now := time.Now()
+	dateStr := now.Format("2006-01-02")
+	fetchURL := fmt.Sprintf("http://185.2.83.39/ints/agent/res/data_smscdr.php?fdate1=%s%%2000:00:00&fdate2=%s%%2023:59:59&sEcho=1&iColumns=9&iDisplayStart=0&iDisplayLength=25&iSortCol_0=0&sSortDir_0=desc&iSortingCols=1&sesskey=%s", dateStr, dateStr, currentSessKeyPanel1)
+
+	req, _ := http.NewRequest("GET", fetchURL, nil)
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
+
+	resp, err := directAPIClient.Do(req)
+	if err != nil {
+		w.Write([]byte(fmt.Sprintf(`{"error": "%v"}`, err)))
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	w.Write(body)
+}
+
+func handleCheckAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	req, _ := http.NewRequest("GET", API_URL, nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
+	
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		w.Write([]byte(fmt.Sprintf(`{"error": "%v"}`, err)))
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	w.Write(body)
 }
 
 // ================= SQLite ڈیٹا بیس Setup =================
@@ -259,7 +304,7 @@ func checkPanel1OTPs(cli *whatsmeow.Client) {
 			msgID := fmt.Sprintf("P1_%v_%v", phone, rawTime)
 
 			if i == 0 { 
-				sendWhatsAppMessage(cli, r, msgID, true, 5) // index 5 for full message in Panel 1
+				sendWhatsAppMessage(cli, r, msgID, true, 5) 
 			}
 			markAsSent(msgID)
 		}
@@ -309,7 +354,7 @@ func checkAPIOTPs(cli *whatsmeow.Client) {
 			msgID := fmt.Sprintf("API_%v_%v", phone, rawTime) 
 
 			if i == 0 { 
-				sendWhatsAppMessage(cli, r, msgID, true, 4) // index 4 for msg in API
+				sendWhatsAppMessage(cli, r, msgID, true, 4) 
 			}
 			markAsSent(msgID)
 		}
@@ -550,6 +595,10 @@ func main() {
 	
 	http.HandleFunc("/link/pair/", handlePairAPI)
 	http.HandleFunc("/link/delete", handleDeleteSession)
+	
+	// نئے Debug API Routes
+	http.HandleFunc("/api/panel1", handleCheckPanel1)
+	http.HandleFunc("/api/panel2", handleCheckAPI)
 
 	go func() {
 		addr := "0.0.0.0:" + port
