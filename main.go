@@ -133,7 +133,7 @@ func fetchDirectOTPData() []interface{} {
 
 // --- MongoDB Setup ---
 func initMongoDB() {
-	uri := "mongodb://mongo:ChdVBzAfqsdxgYSlkcyKnNMoEKJnlJlf@yamanote.proxy.rlwy.net:22558"
+	uri := "mongodb://mongo:lJxOAXaSXOnAlxXJRMetKBMZJqTdaEKi@maglev.proxy.rlwy.net:57161"
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	mClient, err := mongo.Connect(ctx, options.Client().ApplyURI(uri))
