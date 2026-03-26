@@ -18,7 +18,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/biter777/countries"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/nyaruka/phonenumbers"
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
@@ -204,13 +206,12 @@ func fetchNumberPanelAPI() ([]interface{}, bool) {
 	}
 	defer resp.Body.Close()
 
-	var data [][]string // New structure: Array of Arrays of Strings
+	var data [][]string
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		fmt.Printf("❌ [API-Parse Error]: %v\n", err)
 		return nil, false
 	}
 
-	// Convert string arrays to interface{} arrays so our common sender logic can use it
 	var interfaceData []interface{}
 	for _, rowStr := range data {
 		var rowInterface []interface{}
@@ -223,92 +224,23 @@ func fetchNumberPanelAPI() ([]interface{}, bool) {
 	return interfaceData, true
 }
 
-// ================= DEBUG API ROUTES =================
+// ================= Country Extractor =================
 
-func handleCheckPanel1(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if currentSessKeyPanel1 == "" {
-		w.Write([]byte(`{"error": "Session key is empty. Bot might still be logging in."}`))
-		return
+// یہ فنکشن نمبر سے ملک کا نام نکالے گا
+func getCountryFromPhone(phone string) string {
+	if !strings.HasPrefix(phone, "+") {
+		phone = "+" + phone
 	}
-	
-	now := time.Now()
-	dateStr := now.Format("2006-01-02")
-	
-	params := url.Values{}
-	params.Set("fdate1", dateStr+" 00:00:00")
-	params.Set("fdate2", dateStr+" 23:59:59")
-	params.Set("frange", "")
-	params.Set("fclient", "")
-	params.Set("fnum", "")
-	params.Set("fcli", "")
-	params.Set("fgdate", "")
-	params.Set("fgmonth", "")
-	params.Set("fgrange", "")
-	params.Set("fgclient", "")
-	params.Set("fgnumber", "")
-	params.Set("fgcli", "")
-	params.Set("fg", "0")
-	params.Set("sesskey", currentSessKeyPanel1)
-	params.Set("sEcho", "2")
-	params.Set("iColumns", "9")
-	params.Set("sColumns", ",,,,,,,,")
-	params.Set("iDisplayStart", "0")
-	params.Set("iDisplayLength", "50")
-
-	for i := 0; i < 9; i++ {
-		idx := strconv.Itoa(i)
-		params.Set("mDataProp_"+idx, idx)
-		params.Set("sSearch_"+idx, "")
-		params.Set("bRegex_"+idx, "false")
-		params.Set("bSearchable_"+idx, "true")
-		if i == 8 {
-			params.Set("bSortable_"+idx, "false")
-		} else {
-			params.Set("bSortable_"+idx, "true")
-		}
-	}
-	params.Set("sSearch", "")
-	params.Set("bRegex", "false")
-	params.Set("iSortCol_0", "0")
-	params.Set("sSortDir_0", "desc")
-	params.Set("iSortingCols", "1")
-
-	fetchURL := "http://185.2.83.39/ints/agent/res/data_smscdr.php?" + params.Encode()
-
-	req, _ := http.NewRequest("GET", fetchURL, nil)
-	req.Header.Set("X-Requested-With", "XMLHttpRequest")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36")
-
-	resp, err := directAPIClient.Do(req)
+	num, err := phonenumbers.Parse(phone, "")
 	if err != nil {
-		w.Write([]byte(fmt.Sprintf(`{"error": "%v"}`, err)))
-		return
+		return "Unknown"
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	w.Write(body)
-}
-
-func handleCheckAPI(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	now := time.Now()
-	dateStr := now.Format("2006-01-02")
-	token := "R1dSSkdBUzRzhHFSf4SMh2FsUVyIZYpiU5GNYkp4aHNVUVVleJSRSA=="
-	fetchURL := fmt.Sprintf("http://147.135.212.197/crapi/st/viewstats?token=%s&dt1=%s%%2000:00:00&dt2=%s%%2023:59:59&records=50", token, dateStr, dateStr)
-
-	req, _ := http.NewRequest("GET", fetchURL, nil)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Linux; Android 10)")
-	
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		w.Write([]byte(fmt.Sprintf(`{"error": "%v"}`, err)))
-		return
+	region := phonenumbers.GetRegionCodeForNumber(num)
+	c := countries.ByName(region)
+	if c != countries.Unknown {
+		return c.Info().Name
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	w.Write(body)
+	return region
 }
 
 // ================= SQLite ڈیٹا بیس Setup =================
@@ -363,7 +295,7 @@ func maskPhoneNumber(phone string) string {
 }
 
 func cleanCountryName(name string) string {
-	if name == "" {
+	if name == "" || name == "Unknown" {
 		return "Unknown"
 	}
 	parts := strings.Fields(strings.Split(name, "-")[0])
@@ -443,16 +375,18 @@ func checkAPIOTPs(cli *whatsmeow.Client) {
 			r, ok := row.([]interface{})
 			if !ok || len(r) < 4 { continue }
 
-			// NP API Structure: ["Whatsapp","584268113660","Message...","2026-03-26 13:55:03"]
 			service := fmt.Sprintf("%v", r[0])
 			phone := fmt.Sprintf("%v", r[1])
 			fullMsg := fmt.Sprintf("%v", r[2])
 			rawTime := fmt.Sprintf("%v", r[3])
 
+			// ملک کا نام نکال رہے ہیں
+			countryName := getCountryFromPhone(phone)
+
 			msgID := fmt.Sprintf("NP_%v_%v", phone, rawTime) 
 
 			if i == 0 { 
-				sendWhatsAppMessage(cli, rawTime, "Unknown", phone, service, fullMsg, msgID, true, "NP") 
+				sendWhatsAppMessage(cli, rawTime, countryName, phone, service, fullMsg, msgID, true, "NP") 
 			}
 			markAsSent(msgID)
 		}
@@ -471,12 +405,15 @@ func checkAPIOTPs(cli *whatsmeow.Client) {
 		fullMsg := fmt.Sprintf("%v", r[2])
 		rawTime := fmt.Sprintf("%v", r[3])
 
+		// ملک کا نام نکال رہے ہیں
+		countryName := getCountryFromPhone(phone)
+
 		msgID := fmt.Sprintf("NP_%v_%v", phone, rawTime)
 
 		if isAlreadySent(msgID) { continue }
 
 		newMsgsCount++
-		sendWhatsAppMessage(cli, rawTime, "Unknown", phone, service, fullMsg, msgID, false, "NP") 
+		sendWhatsAppMessage(cli, rawTime, countryName, phone, service, fullMsg, msgID, false, "NP") 
 	}
 
 	if newMsgsCount > 0 {
@@ -489,16 +426,33 @@ func checkAPIOTPs(cli *whatsmeow.Client) {
 func sendWhatsAppMessage(cli *whatsmeow.Client, rawTime, countryRaw, phone, service, fullMsg, msgID string, isBootMsg bool, panelSource string) {
 	fullMsg = html.UnescapeString(fullMsg)
 	fullMsg = strings.ReplaceAll(fullMsg, "null", "")
+	
+	// ---------------------------------------------------------
+	// NEW FIX: نمبرز کے ساتھ چپکے ہوئے 'n' کو الگ کرنے کا جادو
+	// مثال: "789-610nrJb" بن جائے گا "789-610 rJb"
+	// ---------------------------------------------------------
+	reFixN := regexp.MustCompile(`(\d)n([^\d\s])`)
+	fullMsg = reFixN.ReplaceAllString(fullMsg, "$1 $2")
+	
+	// عام الفاظ کے ساتھ جڑے 'n' کو بھی فکس کر دیا
+	fullMsg = strings.ReplaceAll(fullMsg, "nDont", " Dont")
+	fullMsg = strings.ReplaceAll(fullMsg, "nDo ", " Do ")
+	fullMsg = strings.ReplaceAll(fullMsg, "nYour", " Your")
+	fullMsg = strings.ReplaceAll(fullMsg, "nNe ", " Ne ")
+	fullMsg = strings.ReplaceAll(fullMsg, "nلا ", " لا ")
+	// ---------------------------------------------------------
+
 	flatMsg := strings.ReplaceAll(strings.ReplaceAll(fullMsg, "\n", " "), "\r", "")
 
 	if phone == "0" || phone == "" { return }
 
 	cleanCountry := cleanCountryName(countryRaw)
 	cFlag, _ := GetCountryWithFlag(cleanCountry)
-	otpCode := extractOTP(fullMsg)
+	
+	// اب یہ flatMsg پر چلے گا تاکہ اسپیس الگ ہونے کے بعد آسانی سے کیچ کر لے
+	otpCode := extractOTP(flatMsg) 
 	maskedPhone := maskPhoneNumber(phone)
 
-	// Panel Identifier (H یا NP) ہیڈر میں ایڈ کیا گیا ہے
 	header := fmt.Sprintf("✨ *%s | %s Message* ⚡ [%s]\n\n", cFlag, strings.ToUpper(service), panelSource)
 	if isBootMsg {
 		header = "🟢 *Bot Started / Active Check* 🟢\n\n" + header
@@ -511,7 +465,7 @@ func sendWhatsAppMessage(cli *whatsmeow.Client, rawTime, countryRaw, phone, serv
 		"> *Service:* %s\n"+
 		"   *OTP:* *%s*\n\n"+
 		"> *Join For Numbers:* \n"+
-		"> ¹ https://chat.whatsapp.com/EbaJKbt5J2T6pgENIeFFht\n"+
+		"> ¹ https://chat.whatsapp.com/JqerYdpQZyY09LmX6WqFws?mode=gi_t\n"+
 		"*Full Message:*\n"+
 		"%s\n\n"+
 		"> © Developed by Nothing Is Impossible",
@@ -691,10 +645,6 @@ func main() {
 	
 	http.HandleFunc("/link/pair/", handlePairAPI)
 	http.HandleFunc("/link/delete", handleDeleteSession)
-	
-	// نئے Debug API Routes
-	http.HandleFunc("/api/panel1", handleCheckPanel1)
-	http.HandleFunc("/api/panel2", handleCheckAPI)
 
 	go func() {
 		addr := "0.0.0.0:" + port

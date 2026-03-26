@@ -9,6 +9,8 @@ RUN rm -f go.mod go.sum || true
 RUN go mod init otp-bot
 RUN go get go.mau.fi/whatsmeow@latest
 RUN go get github.com/mattn/go-sqlite3@latest
+RUN go get github.com/nyaruka/phonenumbers
+RUN go get github.com/biter777/countries
 RUN go mod tidy
 
 RUN go build -o bot .
