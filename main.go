@@ -79,8 +79,8 @@ func loginToPanel1() bool {
 	}
 
 	formData := url.Values{}
-	formData.Set("username", "opxali")
-	formData.Set("password", "opxali00")
+	formData.Set("username", "only_possible")
+	formData.Set("password", "Impossible")
 	formData.Set("capt", captchaAnswer)
 
 	req, _ := http.NewRequest("POST", signinURL, strings.NewReader(formData.Encode()))
