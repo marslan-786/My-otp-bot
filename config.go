@@ -8,9 +8,9 @@ var Config = struct {
 	Interval      int
 }{
 	OwnerNumber: "923027665767",
-	BotName:     "Ali OTP Monitor",
+	BotName:     "Silent OTP Monitor",
 	OTPChannelIDs: []string{
-		"120363406033570613@newsletter",
+		"120363409241877312@newsletter",
 	//	"120363421646654726@newsletter",
 	//	"120363421896353312@newsletter",
 	},
